@@ -392,6 +392,14 @@ static void bch2_btree_node_free_inmem(struct btree_trans *trans,
 	__btree_node_free(trans, b);
 
 	bch2_btree_node_transition_state(&c->btree.cache, b, BTREE_NODE_CACHE_FREEABLE);
+
+	/*
+	 * Drop every path reference to @b by identity: bch2_trans_node_add()
+	 * only migrates paths whose ->pos falls in a replacement node, and a
+	 * stale path may not even hold the lock (fast-relock cache), so
+	 * bch2_trans_node_verify_not_in_iters() would stay silent.
+	 */
+	bch2_trans_node_drop(trans, b);
 }
 
 /*

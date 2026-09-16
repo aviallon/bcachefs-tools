@@ -861,6 +861,30 @@ void bch2_trans_node_add(struct btree_trans *trans, struct btree *b)
 	bch2_trans_revalidate_updates_in_node(trans, b);
 }
 
+/*
+ * Clear every path reference to a node that is being freed, by identity.
+ *
+ * path->l[level].b doubles as a fast-relock cache and may be retained without
+ * a lock: when the cache slot is recycled for a different node, the cached
+ * pointer stale-coincides with whatever now occupies the slot. Position based
+ * migration (bch2_trans_node_add()) can't catch a path whose ->pos no longer
+ * falls in any replacement node - e.g. __bch2_btree_iter_peek_prev() leaves
+ * path->pos inconsistent - and bch2_trans_node_verify_not_in_iters() only
+ * warns about it. Dropping by identity is what keeps such a path from later
+ * unpacking (and dereferencing) a freed node's bset.
+ */
+void bch2_trans_node_drop(struct btree_trans *trans, struct btree *b)
+{
+	struct btree_path *path;
+	unsigned i, level = b->c.level;
+
+	trans_for_each_path(trans, path, i)
+		if (path->l[level].b == b) {
+			btree_node_unlock(trans, path, level);
+			path->l[level].b = ERR_PTR(-BCH_ERR_no_btree_node_init);
+		}
+}
+
 void bch2_trans_node_verify_not_in_iters(struct btree_trans *trans, struct btree *b)
 {
 	struct btree_path *path;
