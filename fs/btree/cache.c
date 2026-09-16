@@ -103,6 +103,7 @@
 
 #include <linux/module.h>
 #include <linux/prefetch.h>
+#include <linux/mm.h>
 #include <linux/sched/mm.h>
 #include <linux/swap.h>
 
@@ -1382,6 +1383,20 @@ struct btree *bch2_btree_node_get(struct btree_trans *trans, struct btree_path *
 	EBUG_ON(level + 1 != path->level);
 
 	struct btree *b = btree_node_mem_ptr(k);
+
+	/*
+	 * mem_ptr is a lockless cache hint: it is only ever 0 or a struct
+	 * btree *. If it is not an addressable kernel address - a stale parent
+	 * key read out of a freed/recycled node, journal replay, or corrupted
+	 * metadata - do not dereference it. Fall through to
+	 * __bch2_btree_node_get(), which looks the node up by hash_val and
+	 * never trusts mem_ptr.
+	 */
+#ifdef __KERNEL__
+	if (unlikely(b && !virt_addr_valid(b)))
+		b = NULL;
+#endif
+
 	prefetch(&b->c.lock);
 
 	/*
@@ -1447,6 +1462,10 @@ struct btree *bch2_btree_node_get_noiter(struct btree_trans *trans,
 	EBUG_ON(level >= BTREE_MAX_DEPTH);
 
 	b = btree_node_mem_ptr(k);
+#ifdef __KERNEL__
+	if (b && !virt_addr_valid(b))
+		b = NULL;
+#endif
 	if (b)
 		goto lock_node;
 retry:
